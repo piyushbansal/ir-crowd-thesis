@@ -7,7 +7,7 @@ from sklearn.externals import joblib
 import os
 
 
-DATA_ROOT = os.getenv("HOME") + '/data/'
+DATA_ROOT = os.getenv("HOME") + "/CrowdSourcingMinimal"+ '/data/'
 JUDGEMENT_FILE = DATA_ROOT + 'all_judgements.txt'
 FULLTEXT_FOLDER = DATA_ROOT + 'url-header-html-txt'
 GROUND_TRUTH_FILE = DATA_ROOT + 'task1_unlabeled_g_truth_cons_public.csv'
@@ -71,8 +71,8 @@ for topic_id, judgements in judgements_by_topic_id.iteritems():
   for doc_id in judgements_by_doc_id.keys():
     # this doc is in <topic_id>/<doc_id>.txt file
     filename = "%s/%s/%s.txt" % (FULLTEXT_FOLDER, topic_id, doc_id)
-
-    with io.open(filename, 'r', encoding='utf-8') as f:
+    
+    with io.open(filename, 'r', encoding='utf-8', errors='ignore') as f:
       document_texts.append(f.read())
 
   vote_lists = [ [j.is_relevant for j in judgements_by_doc_id[doc_id]]

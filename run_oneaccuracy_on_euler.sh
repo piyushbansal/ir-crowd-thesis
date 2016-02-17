@@ -6,7 +6,7 @@
 # corresponding code has been commited to the repo
 
 N_RUNS_PER_TOPIC=30
-OUTPUT_NAME='exp-accuracy-1-vote-per-doc'
+OUTPUT_NAME='exp-accuracy-1-vote-per-doc-active-updated_ground_truth-X-sparse-active_learning'
 
 # Every time you run stuff on Euler, there is gonna be a new file
 # You need to clean it and append to results with filter-and-append.sh

@@ -5,7 +5,7 @@ separated by tabs
 
 """
 
-from experiments import get_accuracy, est_gp, est_majority_vote, est_merge_enough_votes, est_majority_vote_with_nn
+from experiments import get_accuracy, est_gp, est_majority_vote, est_active_merge_enough_votes, est_merge_enough_votes, est_majority_vote_with_nn
 from data import texts_vote_lists_truths_by_topic_id
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
@@ -126,6 +126,8 @@ if __name__ == "__main__":
        'MV' : (est_majority_vote, []),
        'MEV(1)' : (est_merge_enough_votes, [ 1 ]),
        'MVNN(0.5)' : (est_majority_vote_with_nn, [ 0.5 ]),
+       'ActiveMergeEnoughVotes(0.2)' : (est_active_merge_enough_votes, [0.2]),
+       'ActiveMergeEnoughVotes(0.1)' : (est_active_merge_enough_votes, [0.1]),
   }, (1.0, 3.0), topic_id, N_SEQS_PER_EST)
 
 

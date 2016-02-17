@@ -2,6 +2,6 @@
 # Dumb way to kill all jobs on LSF
 while :
 do
-  bkill -u mdavtyan
+  bkill -u pbansal
   sleep 4s
 done

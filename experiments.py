@@ -8,7 +8,7 @@ from sklearn.externals.joblib import Parallel, delayed
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
 import datetime
-from scipy.stats import ttest_ind
+from scipy.stats import ttest_ind, entropy
 import sys
 from scipy.special import logit, expit
 from sklearn import gaussian_process
@@ -17,6 +17,7 @@ from scipy import sparse, io
 import subprocess
 import datetime
 import shutil
+import copy
 
 
 N_CORES = 1
@@ -42,6 +43,14 @@ def get_accuracy(estimates, truths):
 
 
 unit_to_bool_random = lambda x: random.choice([True, False]) if (x == 0.5 or x is None) else (x > 0.5)
+
+def unit_to_bool_random_more_confidence(x):
+  if x > 0.6:
+    return True
+  elif x < 0.4:
+    return False
+  else:
+    return None
 
 get_mean_vote = lambda vote_list: np.mean(vote_list) if vote_list else None
 
@@ -134,7 +143,7 @@ def get_indexes_with_neighborhood_votes_less_than(votes_required, vote_lists,
 
 
 def get_accuracy_sequence_active(estimator, n_votes_to_sample, texts, 
-  vote_lists, truths, text_similarity, active_pars, idx=None, return_final=False, *args):
+  vote_lists, truths, X, text_similarity, active_pars, idx=None, return_final=False, *args):
   """ Active version of the function above
   """
 
@@ -211,7 +220,7 @@ def plot_learning_curves_for_topic(topic_id, n_runs, votes_per_doc, estimators_d
         vote_lists, truths, X, text_similarity, idx, False, *args) for idx in xrange(n_runs) )
     else:
       sequences = Parallel(n_jobs=N_CORES)( delayed(get_accuracy_sequence_active)(estimator, stop_idx, texts, 
-        vote_lists, truths, text_similarity, active_pars, idx, False, *args) for idx in xrange(n_runs) )      
+        vote_lists, truths, X, text_similarity, active_pars, idx, False, *args) for idx in xrange(n_runs) )      
 
     good_slices = [ s[start_idx:] for s in sequences if s is not None ]
     if good_slices:
@@ -438,11 +447,136 @@ def p_merge_enough_votes(texts, vote_lists, text_similarity, votes_required):
 
   return result_p
 
+def get_system_entropy(vote_lists, method="SUM"):
+  """Computes the entropy of the system base e, using the method 
+  specified as a parameter. SUM means the system entropy is sum 
+  of entropies of all individual votes_list for docs.
+  """
+  system_entropy = 0.0
+
+  if method == "SUM":
+    for vote_list in vote_lists:
+      p = get_mean_vote(vote_list)
+      if p:
+        system_entropy += entropy([p, 1-p])
+    return system_entropy
+  else:
+    raise NotImplementedError
+
+def p_minimise_entropy(texts, vote_lists, X, text_similarity, stopping_criterion, estimator, args):
+  """ Sample votes from documents in a greedy fashion
+  such that it minimise system entropy at each document selection.
+  """
+  
+  #print estimator, args
+  current_doc = 0
+  current_vote_lists = copy.deepcopy(vote_lists)
+  last_iter_entropy = float("inf")
+  iterations = 0
+  while True:
+    #print "Beginning iteration"
+    system_entropy = get_system_entropy(current_vote_lists)
+
+    # We can have a stopping criteria very very small. It willl prevent from
+    # going into an infinite loop, when the system stabilises.
+    #print "last_iter", last_iter_entropy, "system_entropy", system_entropy
+    if last_iter_entropy - system_entropy < stopping_criterion:
+      break
+    
+    if system_entropy < 0.8:
+      break
+
+    if iterations > 1000:
+      break
+
+    # Let's sample one document now that minimises the system entropy the most
+    # and assign a label to it using NNMV, MEV, or GP.
+    for doc_index, doc_vote_list in enumerate(current_vote_lists):
+      #print "Sampling document"
+
+      #Adding a positive vote to this document.
+      doc_vote_list.append(1)
+      relevance_label_added_system_entropy = get_system_entropy(current_vote_lists)
+
+      #Adding a negative vote to this document.
+      doc_vote_list[-1] = 0
+      non_relevance_label_added_system_entropy = get_system_entropy(current_vote_lists)
+
+      #Calculating the average entropy of the system in both cases.
+      doc_avg_system_entropy = (relevance_label_added_system_entropy + non_relevance_label_added_system_entropy) / 2
+
+      #Restore the state of the doc_vote_list.
+      doc_vote_list.pop()
+
+      if system_entropy > doc_avg_system_entropy: 
+        #Pick the document that minimises the entropy most.
+        curr_doc = doc_index
+        system_entropy = doc_avg_system_entropy
+        last_iter_entropy = system_entropy
+        #print "Sampled document number ", curr_doc 
+
+    #Compute the labels with this world view of vote_lists.
+    labels = list(estimator(texts, current_vote_lists, X, text_similarity, *args))
+    
+    curr_document_label = labels[curr_doc]
+    #print "Document assigned label", curr_document_label
+
+    # We set the label of sampled doc as the outcome of estimator.
+    current_vote_lists[curr_doc] = [curr_document_label]
+    #print "WORLD VIEW NOW", current_vote_lists
+    iterations += 1
+  
+  # In the end, current_vote_lists will only have final labels calculated from previous steps.
+  # Just return that.
+  #print "FINAL OUTCOME", current_vote_lists
+  return current_vote_lists
+
+
+def est_minimise_entropy(texts, vote_lists, X, text_similarity, estimator, args ):
+  return ( unit_to_bool_random(p) for p
+   in p_minimise_entropy(texts, vote_lists, X, text_similarity, 0.01, estimator, args ) )
+
+
 
 def est_merge_enough_votes(texts, vote_lists, X, text_similarity, votes_required):
   return ( unit_to_bool_random(p) for p
    in p_merge_enough_votes(texts, vote_lists, text_similarity, votes_required) )
 
+def p_active_merge_enough_votes(texts, vote_lists, text_similarity, prob_diff):
+  """ Merge votes from nearest neighbors until the prob. difference is above a 
+  certain threshold.
+  """
+  result_p = []
+  for doc_index, doc_vote_list in enumerate(vote_lists):
+    p, var = get_p_and_var(doc_vote_list)
+    if (p > 0.5 + prob_diff) or (p < 0.5 - prob_diff):
+      result_p.append(p)
+      continue
+    else:
+      # Gather votes around from neighbors
+      similarities = text_similarity[:, doc_index]
+
+      #Setting similarity of doc_index zero, so
+      #we don't pick the same doc again.
+      similarities[doc_index] = 0
+
+      decreasing_order_idx = np.argsort(similarities)[::-1]
+      # Fill the vote list until the prob_diff is big enough
+      vote_list = doc_vote_list[:]
+      for neighbor_idx in decreasing_order_idx:
+        vote_list += vote_lists[neighbor_idx]
+        p, var = get_p_and_var(vote_list)
+        if (p > 0.5 + prob_diff) or (p < 0.5 - prob_diff):
+          break
+
+      result_p.append(p)
+
+  return result_p
+
+
+def est_active_merge_enough_votes(texts, vote_lists, X, text_similarity, prob_diff):
+  return ( unit_to_bool_random(p) for p
+   in p_active_merge_enough_votes(texts, vote_lists, text_similarity, prob_diff) )
 
 def p_gp(texts, vote_lists, X, text_similarity):
   """ Smooth estimates with Gaussian Processes using linear correlation function
@@ -451,7 +585,6 @@ def p_gp(texts, vote_lists, X, text_similarity):
   # for every vote in a vote list we have to get a vector of features 
   labels = []
   feature_vectors = []
-
   bool_to_plus_minus_one = lambda b: 1.0 if b else -1.0
 
   for doc_idx, vote_list in enumerate(vote_lists):
@@ -514,10 +647,13 @@ def p_gp(texts, vote_lists, X, text_similarity):
 
   return result
 
-def est_gp(texts, vote_lists, X, text_similarity):
+def est_gp(texts, vote_lists, X, text_similarity, sufficient_similarity=None):
   return ( unit_to_bool_random(p) for p 
     in p_gp(texts, vote_lists, X, text_similarity) )
 
+def est_gp_more_confidence(texts, vote_lists, X, text_similarity, sufficient_similarity=None):
+  return ( unit_to_bool_random_more_confidence(p) for p 
+    in p_gp(texts, vote_lists, X, text_similarity) )
 
 if __name__ == "__main__":
   loser_topics = ['20644','20922']
@@ -527,10 +663,10 @@ if __name__ == "__main__":
     print 'topic %s' % topic_id
     plot_learning_curves_for_topic(topic_id, 1000, (1.0, 3.0), {
       'MajorityVote' : (est_majority_vote, [], None),
-  #    'MajorityVote,Active(3)' : (est_majority_vote, [], [ 3, None ]),
-  #    'MergeEnoughVotes(1),Active(1)' : (est_merge_enough_votes, [ 1 ], [ 1, None ]),
-  #    'MergeEnoughVotes(1)' : (est_merge_enough_votes, [ 1 ], None),
-  #    'GP(1)' : (est_gp, [ 1 ], None),
+      'MajorityVote,Active(3)' : (est_majority_vote, [], [ 3, None ]),
+      'MergeEnoughVotes(1),Active(1)' : (est_merge_enough_votes, [ 1 ], [ 1, None ]),
+      'MergeEnoughVotes(1)' : (est_merge_enough_votes, [ 1 ], None),
+      'GP(1)' : (est_gp, [ 1 ], None),
       'GP' : (est_gp, [ None ], None),
     }, comment="")
   print "finished job at %s" % datetime.datetime.now()
