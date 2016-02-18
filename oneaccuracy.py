@@ -1,4 +1,4 @@
-from experiments import get_accuracy, est_gp, est_gp_more_confidence,  est_minimise_entropy, est_majority_vote, copy_and_shuffle_sublists, est_active_merge_enough_votes, est_merge_enough_votes, est_majority_vote_with_nn
+from experiments import get_accuracy, est_gp, est_majority_vote_with_nn_more_confidence, est_majority_vote_with_nn_more_confidence_soft_probs, est_gp_more_confidence,  est_minimise_entropy, est_majority_vote, copy_and_shuffle_sublists, est_active_merge_enough_votes, est_merge_enough_votes, est_majority_vote_with_nn
 from data import texts_vote_lists_truths_by_topic_id
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
@@ -10,6 +10,7 @@ import pickle
 from scipy import sparse, io
 import numpy
 from scipy.stats import entropy
+import copy
 
 get_mean_vote = lambda vote_list: numpy.mean(vote_list) if vote_list else None
 
@@ -34,14 +35,21 @@ def get_system_entropy(vote_lists, base=2,method="SUM"):
   else:
     raise NotImplementedError
 
-def add_lambda_votes_to_vote_lists(known_votes, lambda_votes):
+def add_lambda_votes_to_vote_lists(selected_doc, known_votes, lambda_votes):
+  #print "Known votes just after entering add_lambda", known_votes, lambda_votes
   lambda_votes = list(lambda_votes)
 
   for doc_index, doc_vote_list in enumerate(known_votes):
-    vote = lambda_votes[doc_index]
+    if doc_index == selected_doc:
+      continue
+    try:
+      vote = lambda_votes[doc_index]
+    except IndexError:
+      vote = None
     if vote is not None:
-      doc_vote_list.append(lambda_votes[doc_index])
+      doc_vote_list.append(vote)
   
+  #print "Known votes just before exiting add_lambda", known_votes, lambda_votes
   return known_votes
 
 
@@ -58,15 +66,13 @@ def sample_and_minimise_entropy(final_estimator, estimator, n_votes_to_sample, t
   unknown_votes = copy_and_shuffle_sublists(vote_lists)
   known_votes = [ [] for _ in unknown_votes ]
 
-  estimates = [None for _ in vote_lists]
-
   random_vote_taken = False
   doc_to_be_sampled = None
   
   #Continue until you can get one vote for some document.
   #This is just some way of initialisation.
   while not random_vote_taken:
-    print "Trying to take the first vote"
+    #print "Trying to take the first vote"
     updated_doc_idx = random.randrange(len(vote_lists))
     if not unknown_votes[updated_doc_idx]:
       continue
@@ -77,64 +83,68 @@ def sample_and_minimise_entropy(final_estimator, estimator, n_votes_to_sample, t
       known_votes[updated_doc_idx].append(vote)
       random_vote_taken = True
 
-  print "First vote taken ", updated_doc_idx, vote 
-
+  #print "First vote taken ", updated_doc_idx, vote 
+  #print known_votes
   for index in xrange(n_votes_to_sample):
     # This is how the system entropy looks like, right now.
     # We have just sampled one vote about a random document.
-    print "Sampling vote number ", index
-
-    system_entropy = get_system_entropy(known_votes)
-    last_iter_entropy = system_entropy
-    last_iter_labels = known_votes
+    #print "Sampling vote number ", index
 
     if doc_to_be_sampled is not None:
-      print "Document Sampled ", doc_to_be_sampled
+      #print "Document Sampled ", doc_to_be_sampled
       try:
         vote = unknown_votes[doc_to_be_sampled].pop()
         known_votes[doc_to_be_sampled].append(vote)
       except IndexError:
         vote = None
+        #print "Picking random vote, as all votes exhausted for this document"
         #TODO(What better can be done? I'm taking a random vote, if no vote is available)
         known_votes[doc_to_be_sampled].append(bool(random.randint(0,1)))
 
       labels = estimator(texts, known_votes, X, text_similarity, *args)  
-      known_votes = add_lambda_votes_to_vote_lists(known_votes, labels)
-
+      known_votes = add_lambda_votes_to_vote_lists(doc_to_be_sampled, known_votes, labels)
+    
+    #print known_votes
+    last_iter_entropy = float("inf")
+    
     # Pick a document that will minimise the system entropy the most
     for doc_index, doc_vote_list in enumerate(known_votes):
-
+      copy_known_votes = copy.deepcopy(known_votes)
+      #print known_votes
       #Adding a positive vote to this document.
-      doc_vote_list.append(True)
-      
+      copy_known_votes[doc_index].append(True)
+
       # At this point, we can either add full votes, or a portion of those.
       # Consider GP, we can add probability which is outputted at the end.
-      labels = estimator(texts, known_votes, X, text_similarity, *args)
+      labels = estimator(texts, copy_known_votes, X, text_similarity, *args)
 
-      known_votes_plus_labels = add_lambda_votes_to_vote_lists(known_votes, labels)
+      known_votes_plus_labels = add_lambda_votes_to_vote_lists(doc_index, copy_known_votes, labels)
 
       relevance_label_added_system_entropy = get_system_entropy(known_votes_plus_labels)
 
       #Adding a negative vote to this document.
-      doc_vote_list[-1] = False
+      copy_known_votes[doc_index].pop(-1)
+      copy_known_votes[doc_index].append(False)
       
       # At this point, we can either add full votes, or a portion of those.
       # Consider GP, we can add probability which is outputted at the end.
-      labels = estimator(texts, known_votes, X, text_similarity, *args)
+      labels = estimator(texts, copy_known_votes, X, text_similarity, *args)
 
-      known_votes_plus_labels = add_lambda_votes_to_vote_lists(known_votes, labels)
+      known_votes_plus_labels = add_lambda_votes_to_vote_lists(doc_index, copy_known_votes, labels)
 
       non_relevance_label_added_system_entropy = get_system_entropy(known_votes_plus_labels)
 
       #Calculating the average entropy of the system in both cases.
       doc_avg_system_entropy = (relevance_label_added_system_entropy + non_relevance_label_added_system_entropy) / 2
-
+      
+      #print "Looking at doc, and it's entropy", doc_index, doc_avg_system_entropy
       #Restore the state of the doc_vote_list.
-      doc_vote_list.pop()
+      copy_known_votes[doc_index].pop()
 
       if doc_avg_system_entropy < last_iter_entropy:
         doc_to_be_sampled = doc_index
         last_iter_entropy = doc_avg_system_entropy
+        #print "current best doc and entropy ", doc_index, doc_avg_system_entropy
 
   if doc_to_be_sampled is not None:
     try:
@@ -146,7 +156,7 @@ def sample_and_minimise_entropy(final_estimator, estimator, n_votes_to_sample, t
       known_votes[doc_to_be_sampled].append(bool(random.randint(0,1)))
 
     labels = estimator(texts, known_votes, X, text_similarity, *args)  
-    known_votes = add_lambda_votes_to_vote_lists(known_votes, labels)
+    known_votes = add_lambda_votes_to_vote_lists(doc_to_be_sampled, known_votes, labels)
 
   try:
     estimates = final_estimator(texts, known_votes, X, text_similarity, *args)
@@ -243,19 +253,19 @@ if __name__ == "__main__":
   except KeyError:
     raise Error("Please suppy topic_id to get accuracies for")
 
-  N_REPEATS = 1
+  N_REPEATS = 10
   
   for _ in xrange(N_REPEATS):
     print_accuracies_to_stderr({
-       #'Matlab GP' : (est_gp, [None]),
-       #'MajorityVote' : (est_majority_vote, []),
-       #'MergeEnoughVotes(1)' : (est_merge_enough_votes, [ 1 ]),
-       #'MajorityVoteWithNN(0.5)' : (est_majority_vote_with_nn, [ 0.5 ]),
+       'Matlab GP' : (est_gp, [None]),
+       'MajorityVote' : (est_majority_vote, []),
+       'MergeEnoughVotes(1)' : (est_merge_enough_votes, [ 1 ]),
+       'MajorityVoteWithNN(0.5)' : (est_majority_vote_with_nn, [ 0.5 ]),
        #'ActiveMergeEnoughVotes(0.2)' : (est_active_merge_enough_votes, [0.2]),
        #'ActiveMergeEnoughVotes(0.1)' : (est_active_merge_enough_votes, [0.1]),
        #'MinimiseEntropy': (est_minimise_entropy, [est_merge_enough_votes, [1]]),
       }, 1, topic_id)
     print_accuracies_to_stderr({
-       'ActiveLearning' : (est_gp_more_confidence, [None]),
-      }, 1, topic_id, sampler=sample_and_minimise_entropy, final_estimator = est_gp)
+       'ActiveLearning' : (est_majority_vote_with_nn_more_confidence_soft_probs, [None]),
+      }, 1, topic_id, sampler=sample_and_minimise_entropy, final_estimator = est_majority_vote_with_nn)
 

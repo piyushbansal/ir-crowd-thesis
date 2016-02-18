@@ -45,12 +45,21 @@ def get_accuracy(estimates, truths):
 unit_to_bool_random = lambda x: random.choice([True, False]) if (x == 0.5 or x is None) else (x > 0.5)
 
 def unit_to_bool_random_more_confidence(x):
-  if x > 0.6:
+  if x is None:
+    return None
+  elif x > 0.6:
     return True
   elif x < 0.4:
     return False
   else:
     return None
+
+def unit_to_bool_random_more_confidence_soft_probs(x):
+  if x is None:
+    return None
+  else:
+    return x
+
 
 get_mean_vote = lambda vote_list: np.mean(vote_list) if vote_list else None
 
@@ -417,6 +426,14 @@ def p_majority_vote_with_nn(texts, vote_lists, text_similarity, sufficient_simil
 
 def est_majority_vote_with_nn(texts, vote_lists, X, text_similarity, sufficient_similarity):
   return ( unit_to_bool_random(p) for p
+   in p_majority_vote_with_nn(texts, vote_lists, text_similarity, sufficient_similarity) )
+
+def est_majority_vote_with_nn_more_confidence(texts, vote_lists, X, text_similarity, sufficient_similarity):
+  return ( unit_to_bool_random_more_confidence(p) for p
+   in p_majority_vote_with_nn(texts, vote_lists, text_similarity, sufficient_similarity) )
+
+def est_majority_vote_with_nn_more_confidence_soft_probs(texts, vote_lists, X, text_similarity, sufficient_similarity):
+  return ( unit_to_bool_random_more_confidence_soft_probs(p) for p
    in p_majority_vote_with_nn(texts, vote_lists, text_similarity, sufficient_similarity) )
 
 
