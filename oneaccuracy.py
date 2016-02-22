@@ -1,4 +1,4 @@
-from experiments import get_accuracy, est_gp, est_majority_vote_with_nn_more_confidence, est_majority_vote_with_nn_more_confidence_soft_probs, est_gp_more_confidence,  est_minimise_entropy, est_majority_vote, copy_and_shuffle_sublists, est_active_merge_enough_votes, est_merge_enough_votes, est_majority_vote_with_nn
+from experiments import get_accuracy, classify_kde_bayes, est_gp, est_gp_min_variance, est_majority_vote_with_nn_more_confidence, est_majority_vote_with_nn_more_confidence_soft_probs, est_gp_more_confidence,  est_minimise_entropy, est_majority_vote, copy_and_shuffle_sublists, est_active_merge_enough_votes, est_merge_enough_votes, est_majority_vote_with_nn
 from data import texts_vote_lists_truths_by_topic_id
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
@@ -202,7 +202,64 @@ def get_last_accuracy_in_sequence(estimator, n_votes_to_sample, texts,
     traceback.print_exc()
     #sys.stdout.write('Fail\n')
     return None
+
+def sample_gp_variance_min_entropy(estimator, n_votes_to_sample, texts, 
+  vote_lists, truths, X, text_similarity, idx=None, return_final=False, *args):
+  """ Randomly sample votes and re-calculate estimates.
+  """
+  random.seed()
+
+  unknown_votes = copy_and_shuffle_sublists(vote_lists)
+  known_votes = [ [] for _ in unknown_votes ]
+
+  estimates = [None for _ in vote_lists]
+
+  accuracy_sequence = [None] * n_votes_to_sample
+  curr_doc_selected = None
+
+  # This is a crowdsourcing procedure
+  for index in xrange(n_votes_to_sample):
+    # Counter
+    # sys.stderr.write(str(index)+'\n')
     
+    max_variance_seen = 0
+    # Draw one vote for a random document
+    if curr_doc_selected is None:
+      updated_doc_idx = random.randrange(len(vote_lists))
+      if not unknown_votes[updated_doc_idx]:
+        # We ran out of votes for this document, diregard this sequence
+        return None
+      vote = unknown_votes[updated_doc_idx].pop()
+      known_votes[updated_doc_idx].append(vote)
+    else:
+      #print "Selected doc number ", curr_doc_selected
+      try:
+        vote = unknown_votes[curr_doc_selected].pop()
+      except IndexError:
+        vote = bool(random.randint(0,1))
+      known_votes[curr_doc_selected].append(vote)
+      #print known_votes 
+    estimates = estimator(texts, known_votes, X, text_similarity, *args)
+    #print estimates
+    sorted_estimates = sorted(enumerate(estimates), key=lambda x: x[1][1])
+    curr_doc_selected = random.choice([element[0] for element in sorted_estimates][:5])
+    #for doc_index, (label, variance) in enumerate(estimates):
+      #print doc_index, label, variance
+      #if variance > max_variance_seen:
+      #  max_variance_seen = variance
+      #  curr_doc_selected = doc_index
+      
+  # Calculate all the estimates
+  try:
+    estimates = estimator(texts, known_votes, X, text_similarity, *args)
+    labels = [x[0] for x in estimates]
+    #sys.stderr.write('Success\n')
+    return get_accuracy(labels, truths)
+  except Exception, e:
+    traceback.print_exc()
+    #sys.stdout.write('Fail\n')
+    return None
+   
 
 def print_accuracies_to_stderr(estimator_dict, max_votes_per_doc, topic_id, sampler=get_last_accuracy_in_sequence, final_estimator=None ):
   texts, vote_lists, truths = texts_vote_lists_truths_by_topic_id[topic_id]
@@ -218,7 +275,7 @@ def print_accuracies_to_stderr(estimator_dict, max_votes_per_doc, topic_id, samp
 
   for estimator_name, estimator_args in estimator_dict.iteritems():
     estimator, args = estimator_args
-    if sampler == get_last_accuracy_in_sequence:
+    if sampler == get_last_accuracy_in_sequence or sampler == sample_gp_variance_min_entropy:
       accuracy = sampler(estimator, sequence_length, texts,
           vote_lists, truths, X, text_similarity, None, False, *args)  
       accuracy_to_str = lambda acc: ("%.4f" % acc) if acc is not None else 'NA' 
@@ -259,13 +316,16 @@ if __name__ == "__main__":
     print_accuracies_to_stderr({
        'Matlab GP' : (est_gp, [None]),
        'MajorityVote' : (est_majority_vote, []),
-       'MergeEnoughVotes(1)' : (est_merge_enough_votes, [ 1 ]),
-       'MajorityVoteWithNN(0.5)' : (est_majority_vote_with_nn, [ 0.5 ]),
+       #'MergeEnoughVotes(1)' : (est_merge_enough_votes, [ 1 ]),
+       #'MajorityVoteWithNN(0.5)' : (est_majority_vote_with_nn, [ 0.5 ]),
        #'ActiveMergeEnoughVotes(0.2)' : (est_active_merge_enough_votes, [0.2]),
        #'ActiveMergeEnoughVotes(0.1)' : (est_active_merge_enough_votes, [0.1]),
        #'MinimiseEntropy': (est_minimise_entropy, [est_merge_enough_votes, [1]]),
-      }, 1, topic_id)
+       #'KDE': (classify_kde_bayes, [None]),
+      }, 0.7, topic_id)
     print_accuracies_to_stderr({
-       'ActiveLearning' : (est_majority_vote_with_nn_more_confidence_soft_probs, [None]),
+       #'ActiveLearning' : (est_majority_vote_with_nn_more_confidence_soft_probs, [None]),
       }, 1, topic_id, sampler=sample_and_minimise_entropy, final_estimator = est_majority_vote_with_nn)
-
+    print_accuracies_to_stderr({
+       'ActiveGPVariance': (est_gp_min_variance, [None]),
+      }, 0.7, topic_id, sampler=sample_gp_variance_min_entropy)

@@ -8,7 +8,7 @@ from sklearn.externals.joblib import Parallel, delayed
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
 import datetime
-from scipy.stats import ttest_ind, entropy
+from scipy.stats import ttest_ind, entropy, kde
 import sys
 from scipy.special import logit, expit
 from sklearn import gaussian_process
@@ -18,7 +18,7 @@ import subprocess
 import datetime
 import shutil
 import copy
-
+import operator
 
 N_CORES = 1
 MATLAB_TEMP_DIR = '/scratch/' # Local scratch folder that gets deleted automatically when the job is done
@@ -437,6 +437,52 @@ def est_majority_vote_with_nn_more_confidence_soft_probs(texts, vote_lists, X, t
    in p_majority_vote_with_nn(texts, vote_lists, text_similarity, sufficient_similarity) )
 
 
+def bayes_classifier(x_vec, kdes):
+    """
+    Classifies an input sample into class w_j determined by
+    maximizing the class conditional probability for p(x|w_j).
+
+    Keyword arguments:
+        x_vec: A dx1 dimensional numpy array representing the sample.
+        kdes: List of the gausssian_kde (kernel density) estimates
+
+    Returns a tuple ( p(x|w_j)_value, class label ).
+
+    """
+    p_vals = []
+    for kde in kdes:
+        p_vals.append(kde.evaluate(x_vec))
+    max_index, max_value = max(enumerate(p_vals), key=operator.itemgetter(1))
+    return (max_value, max_index)
+
+
+def classify_kde_bayes(texts, vote_lists, X, text_similarity, sufficient_similarity):
+  """Runs a bayesian classifier on the learnt KDE for positive, and hegative_classes."""
+  result_labels = []
+  X = X.toarray()
+  print X.shape
+  positive_examples, negative_examples = [], []
+  for doc_index, doc_vote_list in enumerate(vote_lists):
+    for votes in doc_vote_list:
+      if votes == True:
+        positive_examples.append(X[doc_index])
+      if votes == False:
+        negative_examples.append(X[doc_index])
+
+  X_positive = np.array(positive_examples).T
+  X_negative = np.array(negative_examples).T
+  print X_positive.shape
+  kde_pos = kde.gaussian_kde(X_positive)
+  kde_neg = kde.gaussian_kde(X_negative)
+
+  for sample in X:
+    print sample.shape
+    # Pos class is 1, Neg class is 0
+    prob, label =  bayes_classifier(sample, [kde_neg, kde_pos])
+    result_labels.append(bool(label))
+  
+  return result_labels
+
 def p_merge_enough_votes(texts, vote_lists, text_similarity, votes_required):
   """ Merge votes from nearest neighbors until a sufficient amount of votes 
       is reached
@@ -594,6 +640,62 @@ def p_active_merge_enough_votes(texts, vote_lists, text_similarity, prob_diff):
 def est_active_merge_enough_votes(texts, vote_lists, X, text_similarity, prob_diff):
   return ( unit_to_bool_random(p) for p
    in p_active_merge_enough_votes(texts, vote_lists, text_similarity, prob_diff) )
+
+def p_gp_min_variance(texts, vote_lists, X, text_similarity):
+  """ Smooth estimates with Gaussian Processes using linear correlation function
+      Extrapolate to get estimates for unknown values as well
+  """
+  # for every vote in a vote list we have to get a vector of features 
+  labels = []
+  feature_vectors = []
+  bool_to_plus_minus_one = lambda b: 1.0 if b else -1.0
+
+  for doc_idx, vote_list in enumerate(vote_lists):
+    for vote in vote_list:
+      labels.append( bool_to_plus_minus_one(vote) )
+      feature_vectors.append( X[doc_idx, :] )
+
+  X_new = sparse.vstack(feature_vectors)
+  y = np.array(labels, dtype=np.float64)[np.newaxis].T
+
+  # Preparing a temp folder for running MATLAB
+  random.seed()
+  folder_id = random.randint(0, sys.maxint)
+
+  matlab_folder_name = MATLAB_TEMP_DIR + 'matlab_' + str(folder_id)
+  shutil.copytree('matlab', matlab_folder_name)
+
+  io.savemat(matlab_folder_name + '/train.mat', mdict = {'x' : X_new, 'y' : y})
+  io.savemat(matlab_folder_name + '/test.mat', mdict = {'t' : X })
+
+  print 'Running MATLAB, started %s' % str(datetime.datetime.now())
+  code = subprocess.call(['matlab/run3_in_dir.sh', matlab_folder_name])
+  if code != 0:
+    raise OSError('MATLAB code couldn\'t run')
+  print 'Finished %s' % str(datetime.datetime.now())
+
+  print 'Getting the matrix'
+
+  # Loads a `prob` vector
+  prob_location = matlab_folder_name + '/prob.mat'
+  print 'Loading prob vector from %s' % prob_location
+  mat_objects = io.loadmat(prob_location)
+  prob = mat_objects['prob']
+
+  # Loads a `variance` vector
+  b_location = matlab_folder_name + '/b.mat'
+  print 'Loading b vector from %s' % prob_location
+  mat_objects = io.loadmat(b_location)
+  variance = mat_objects['b']
+
+
+  result = zip(prob[:, 0], variance[:,0])
+  return result
+
+def est_gp_min_variance(texts, vote_lists, X, text_similarity, sufficient_similarity=None):
+  return ( (unit_to_bool_random(p[0]),p[1]) for p
+    in p_gp_min_variance(texts, vote_lists, X, text_similarity) )
+
 
 def p_gp(texts, vote_lists, X, text_similarity):
   """ Smooth estimates with Gaussian Processes using linear correlation function

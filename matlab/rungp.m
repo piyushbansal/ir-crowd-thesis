@@ -25,4 +25,4 @@ disp('Saving to prob.mat in current folder:')
 disp(pwd)
 
 save('prob.mat', 'prob');
-
+save('b.mat', 'b');
