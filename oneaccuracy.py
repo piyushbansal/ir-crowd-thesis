@@ -11,8 +11,22 @@ from scipy import sparse, io
 import numpy
 from scipy.stats import entropy
 import copy
+from numpy import cumsum
+from numpy.random import rand
 
 get_mean_vote = lambda vote_list: numpy.mean(vote_list) if vote_list else None
+
+def weightedChoice(weights, objects):
+    """Return a random item from objects, with the weighting defined by weights 
+    (which must sum to 1)."""
+    cs = cumsum(weights) #An array of the weights, cumulatively summed.
+    idx = sum(cs < rand()) #Find the index of the first weight over a random value.
+    return objects[idx]
+
+def get_weighted_sample(elements, probs):
+  sum_probs = sum(probs)
+  probs  = map(lambda x: x/sum_probs, probs)
+  return weightedChoice(probs, elements)
 
 def get_system_entropy(vote_lists, base=2,method="SUM"):
   """Computes the entropy of the system base "base", using the method 
@@ -241,8 +255,12 @@ def sample_gp_variance_min_entropy(estimator, n_votes_to_sample, texts,
       #print known_votes 
     estimates = estimator(texts, known_votes, X, text_similarity, *args)
     #print estimates
-    sorted_estimates = sorted(enumerate(estimates), key=lambda x: x[1][1])
-    curr_doc_selected = random.choice([element[0] for element in sorted_estimates][:5])
+    #sorted_estimates = sorted(enumerate(estimates), key=lambda x: x[1][1])
+    
+    #Just need to get the document index, which is element[0] for enumerate(estimates)
+    curr_doc_selected = get_weighted_sample(list(enumerate(estimates)),[x[1] for x in estimates])[0]
+
+    #curr_doc_selected = random.choice([element[0] for element in sorted_estimates][:5])
     #for doc_index, (label, variance) in enumerate(estimates):
       #print doc_index, label, variance
       #if variance > max_variance_seen:
@@ -314,15 +332,15 @@ if __name__ == "__main__":
   
   for _ in xrange(N_REPEATS):
     print_accuracies_to_stderr({
-       'Matlab GP' : (est_gp, [None]),
-       'MajorityVote' : (est_majority_vote, []),
+       #'Matlab GP' : (est_gp, [None]),
+       #'MajorityVote' : (est_majority_vote, []),
        #'MergeEnoughVotes(1)' : (est_merge_enough_votes, [ 1 ]),
        #'MajorityVoteWithNN(0.5)' : (est_majority_vote_with_nn, [ 0.5 ]),
        #'ActiveMergeEnoughVotes(0.2)' : (est_active_merge_enough_votes, [0.2]),
        #'ActiveMergeEnoughVotes(0.1)' : (est_active_merge_enough_votes, [0.1]),
        #'MinimiseEntropy': (est_minimise_entropy, [est_merge_enough_votes, [1]]),
        #'KDE': (classify_kde_bayes, [None]),
-      }, 0.7, topic_id)
+      }, 1, topic_id)
     print_accuracies_to_stderr({
        #'ActiveLearning' : (est_majority_vote_with_nn_more_confidence_soft_probs, [None]),
       }, 1, topic_id, sampler=sample_and_minimise_entropy, final_estimator = est_majority_vote_with_nn)

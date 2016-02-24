@@ -4,14 +4,14 @@ This calculated accuracy sequences and puts writes them to STDERR
 separated by tabs
 
 """
-
-from experiments import get_accuracy, est_gp, est_majority_vote, est_active_merge_enough_votes, est_merge_enough_votes, est_majority_vote_with_nn
+from experiments import get_accuracy, classify_kde_bayes, est_gp, est_gp_min_variance, est_majority_vote_with_nn_more_confidence, est_majority_vote_with_nn_more_confidence_soft_probs, est_gp_more_confidence,  est_minimise_entropy, est_majority_vote, copy_and_shuffle_sublists, est_active_merge_enough_votes, est_merge_enough_votes, est_majority_vote_with_nn
 from data import texts_vote_lists_truths_by_topic_id
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
-import sys
+import sys, pickle
 import random
-
+import numpy
+from scipy import sparse 
 
 def get_indexes_of_smallest_elements(l):
   """
@@ -24,6 +24,78 @@ def get_indexes_of_smallest_elements(l):
   """
   min_element = min(l)
   return [i for i, el in enumerate(l) if el == min_element ]
+
+def weighted_choice(choices):
+   print choices
+   total = sum(w for c, w in choices)
+   r = random.uniform(0, total)
+   upto = 0
+   for i, (c, w) in enumerate(choices):
+      if upto + w >= r:
+         return i
+      upto += w
+   assert False, "Shouldn't get here"
+
+def get_weighted_sample(elements, probs):
+  sum_probs = sum(probs)
+  probs  = map(lambda x: x/sum_probs, probs)
+  return weighted_choice(zip(elements, probs))
+
+def sample_gp_variance_min_entropy(estimator_dict, n_votes_to_sample, texts,
+  vote_lists, truths, X, text_similarity, idx=None, return_final=False, *args):
+  """ Randomly sample votes and re-calculate estimates.
+  """
+  random.seed()
+
+  unknown_votes = copy_and_shuffle_sublists(vote_lists)
+  
+  accuracy_sequences = {}
+
+  for estimator_name, estimator_args in estimator_dict.iteritems():
+    estimator, args = estimator_args
+    accuracy_sequences[estimator_name] = []
+
+    known_votes = [ [] for _ in unknown_votes ]
+
+    estimates = [None for _ in vote_lists]
+
+    curr_doc_selected = None
+    
+    # This is a crowdsourcing procedure
+    for index in xrange(n_votes_to_sample):
+      print "Sampling vote number ", index
+
+      # Draw one vote for a random document
+      if curr_doc_selected is None:
+        updated_doc_idx = random.randrange(len(vote_lists))
+        if not unknown_votes[updated_doc_idx]:
+          # We ran out of votes for this document, diregard this sequence
+          return None
+        vote = unknown_votes[updated_doc_idx].pop()
+        known_votes[updated_doc_idx].append(vote)
+      else:   
+        #print "Selected doc number ", curr_doc_selected
+        try:    
+          vote = unknown_votes[curr_doc_selected].pop()
+        except IndexError:
+          vote = bool(random.randint(0,1))
+        known_votes[curr_doc_selected].append(vote)
+        print "Known votes ", known_votes 
+      estimates = estimator(texts, known_votes, X, text_similarity, *args)
+      #Just need to get the document index, which is element[0] for enumerate(estimates)
+      objects = list(enumerate(estimates))
+      print "estimates ", objects
+      curr_doc_selected = get_weighted_sample(objects,[x[1][1] for x in objects])
+      print curr_doc_selected
+      # Calculate all the estimates
+      try:
+        estimates = estimator(texts, known_votes, X, text_similarity, *args)
+        labels = [x[0] for x in estimates]
+        accuracy_sequences[estimator_name].append(get_accuracy(labels, truths))
+      except Exception, e:
+        accuracy_sequences[estimator_name].append(None)
+  
+  return accuracy_sequences
 
 
 def get_accuracy_sequences(estimator_dict, sequence_length, texts, vote_lists, truths, X, text_similarity):
@@ -76,12 +148,14 @@ def get_accuracy_sequences(estimator_dict, sequence_length, texts, vote_lists, t
   
   return accuracy_sequences
 
-def print_accuracy_sequences_to_stderr(estimator_dict, votes_per_doc, topic_id, n_sequesnces_per_estimator):
+def print_accuracy_sequences_to_stderr(estimator_dict, votes_per_doc, topic_id, n_sequesnces_per_estimator, sampler=get_accuracy_sequences):
   texts, vote_lists, truths = texts_vote_lists_truths_by_topic_id[topic_id]
   n_documents = len(texts)
 
-  vectorizer = TfidfVectorizer()
-  X = vectorizer.fit_transform(texts)
+  pickle_file = open('../data/vectors.pkl', 'rb')
+  vectors = pickle.load(pickle_file)
+  X = sparse.csr_matrix(numpy.array(vectors[topic_id]).astype(numpy.double))
+
   text_similarity = cosine_similarity(X)
 
   min_votes_per_doc, max_votes_per_doc = votes_per_doc
@@ -100,7 +174,7 @@ def print_accuracy_sequences_to_stderr(estimator_dict, votes_per_doc, topic_id, 
     while sequences is None:
       counter += 1
       print '#ATTEMPT\t%s' % counter
-      sequences = get_accuracy_sequences(estimator_dict, sequence_length, texts, vote_lists, truths, X, text_similarity)
+      sequences = sampler(estimator_dict, sequence_length, texts, vote_lists, truths, X, text_similarity)
 
     # Got a sequence
     # Write all sequences from this dict to stderr
@@ -124,10 +198,13 @@ if __name__ == "__main__":
   print_accuracy_sequences_to_stderr({
        'GP' : (est_gp, []),
        'MV' : (est_majority_vote, []),
-       'MEV(1)' : (est_merge_enough_votes, [ 1 ]),
-       'MVNN(0.5)' : (est_majority_vote_with_nn, [ 0.5 ]),
-       'ActiveMergeEnoughVotes(0.2)' : (est_active_merge_enough_votes, [0.2]),
-       'ActiveMergeEnoughVotes(0.1)' : (est_active_merge_enough_votes, [0.1]),
-  }, (1.0, 3.0), topic_id, N_SEQS_PER_EST)
+       #'MEV(1)' : (est_merge_enough_votes, [ 1 ]),
+       #'MVNN(0.5)' : (est_majority_vote_with_nn, [ 0.5 ]),
+       #'ActiveMergeEnoughVotes(0.2)' : (est_active_merge_enough_votes, [0.2]),
+       #'ActiveMergeEnoughVotes(0.1)' : (est_active_merge_enough_votes, [0.1]),
+  }, (0.01, 1.05), topic_id, N_SEQS_PER_EST)
 
+  print_accuracy_sequences_to_stderr({
+      'ActiveGPVariance' : (est_gp_min_variance, [None]),
+    }, (0.01, 1.05), topic_id, N_SEQS_PER_EST, sampler=sample_gp_variance_min_entropy)
 

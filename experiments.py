@@ -12,6 +12,7 @@ from scipy.stats import ttest_ind, entropy, kde
 import sys
 from scipy.special import logit, expit
 from sklearn import gaussian_process
+from sklearn.neighbors import KernelDensity
 import gc
 from scipy import sparse, io
 import subprocess
@@ -436,7 +437,6 @@ def est_majority_vote_with_nn_more_confidence_soft_probs(texts, vote_lists, X, t
   return ( unit_to_bool_random_more_confidence_soft_probs(p) for p
    in p_majority_vote_with_nn(texts, vote_lists, text_similarity, sufficient_similarity) )
 
-
 def bayes_classifier(x_vec, kdes):
     """
     Classifies an input sample into class w_j determined by
@@ -451,7 +451,7 @@ def bayes_classifier(x_vec, kdes):
     """
     p_vals = []
     for kde in kdes:
-        p_vals.append(kde.evaluate(x_vec))
+        p_vals.append(kde.score_samples([x_vec])[0])
     max_index, max_value = max(enumerate(p_vals), key=operator.itemgetter(1))
     return (max_value, max_index)
 
@@ -460,7 +460,6 @@ def classify_kde_bayes(texts, vote_lists, X, text_similarity, sufficient_similar
   """Runs a bayesian classifier on the learnt KDE for positive, and hegative_classes."""
   result_labels = []
   X = X.toarray()
-  print X.shape
   positive_examples, negative_examples = [], []
   for doc_index, doc_vote_list in enumerate(vote_lists):
     for votes in doc_vote_list:
@@ -469,19 +468,16 @@ def classify_kde_bayes(texts, vote_lists, X, text_similarity, sufficient_similar
       if votes == False:
         negative_examples.append(X[doc_index])
 
-  X_positive = np.array(positive_examples).T
-  X_negative = np.array(negative_examples).T
-  print X_positive.shape
-  kde_pos = kde.gaussian_kde(X_positive)
-  kde_neg = kde.gaussian_kde(X_negative)
+  kde_pos = KernelDensity(kernel='gaussian', bandwidth=0.2).fit(positive_examples)
+  kde_neg = KernelDensity(kernel='gaussian', bandwidth=0.2).fit(negative_examples)
 
   for sample in X:
-    print sample.shape
     # Pos class is 1, Neg class is 0
     prob, label =  bayes_classifier(sample, [kde_neg, kde_pos])
     result_labels.append(bool(label))
-  
+
   return result_labels
+
 
 def p_merge_enough_votes(texts, vote_lists, text_similarity, votes_required):
   """ Merge votes from nearest neighbors until a sufficient amount of votes 
@@ -669,7 +665,7 @@ def p_gp_min_variance(texts, vote_lists, X, text_similarity):
   io.savemat(matlab_folder_name + '/test.mat', mdict = {'t' : X })
 
   print 'Running MATLAB, started %s' % str(datetime.datetime.now())
-  code = subprocess.call(['matlab/run3_in_dir.sh', matlab_folder_name])
+  code = subprocess.call(['matlab/run_in_dir.sh', matlab_folder_name])
   if code != 0:
     raise OSError('MATLAB code couldn\'t run')
   print 'Finished %s' % str(datetime.datetime.now())
