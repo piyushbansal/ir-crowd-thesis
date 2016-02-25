@@ -26,7 +26,7 @@ def get_indexes_of_smallest_elements(l):
   return [i for i, el in enumerate(l) if el == min_element ]
 
 def weighted_choice(choices):
-   print choices
+   #print choices
    total = sum(w for c, w in choices)
    r = random.uniform(0, total)
    upto = 0
@@ -36,9 +36,18 @@ def weighted_choice(choices):
       upto += w
    assert False, "Shouldn't get here"
 
+def weightedChoice(weights, objects):
+    """Return a random item from objects, with the weighting defined by weights 
+    (which must sum to 1)."""
+    cs = numpy.cumsum(weights) #An array of the weights, cumulatively summed.
+    idx = sum(cs < numpy.random.rand()) #Find the index of the first weight over a random value.
+    #print objects, idx
+    return objects[idx]
+
 def get_weighted_sample(elements, probs):
   sum_probs = sum(probs)
   probs  = map(lambda x: x/sum_probs, probs)
+  #return weightedChoice(probs, elements)
   return weighted_choice(zip(elements, probs))
 
 def sample_gp_variance_min_entropy(estimator_dict, n_votes_to_sample, texts,
@@ -63,7 +72,7 @@ def sample_gp_variance_min_entropy(estimator_dict, n_votes_to_sample, texts,
     
     # This is a crowdsourcing procedure
     for index in xrange(n_votes_to_sample):
-      print "Sampling vote number ", index
+      #print "Sampling vote number ", index
 
       # Draw one vote for a random document
       if curr_doc_selected is None:
@@ -71,27 +80,29 @@ def sample_gp_variance_min_entropy(estimator_dict, n_votes_to_sample, texts,
         if not unknown_votes[updated_doc_idx]:
           # We ran out of votes for this document, diregard this sequence
           return None
-        vote = unknown_votes[updated_doc_idx].pop()
+        vote = random.choice(unknown_votes[updated_doc_idx])
         known_votes[updated_doc_idx].append(vote)
       else:   
         #print "Selected doc number ", curr_doc_selected
         try:    
-          vote = unknown_votes[curr_doc_selected].pop()
+          vote = random.choice(unknown_votes[curr_doc_selected])
         except IndexError:
-          vote = bool(random.randint(0,1))
+          # We ran out of votes for this document, disregard this sequence
+          return None
         known_votes[curr_doc_selected].append(vote)
-        print "Known votes ", known_votes 
+        #print "Known votes ", known_votes 
       estimates = estimator(texts, known_votes, X, text_similarity, *args)
       #Just need to get the document index, which is element[0] for enumerate(estimates)
       objects = list(enumerate(estimates))
-      print "estimates ", objects
+      #print "estimates ", objects
       curr_doc_selected = get_weighted_sample(objects,[x[1][1] for x in objects])
-      print curr_doc_selected
+      #print curr_doc_selected
       # Calculate all the estimates
+      estimates = estimator(texts, known_votes, X, text_similarity, *args)
+      labels = [x[0] for x in estimates]
       try:
-        estimates = estimator(texts, known_votes, X, text_similarity, *args)
-        labels = [x[0] for x in estimates]
-        accuracy_sequences[estimator_name].append(get_accuracy(labels, truths))
+        accuracy = get_accuracy(labels, truths)
+        accuracy_sequences[estimator_name].append(accuracy)
       except Exception, e:
         accuracy_sequences[estimator_name].append(None)
   
