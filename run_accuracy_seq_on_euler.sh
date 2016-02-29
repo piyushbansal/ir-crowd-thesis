@@ -5,7 +5,7 @@
 # This file contains a command that has been run after the 
 # corresponding code has been commited to the repo
 
-OUTPUT_NAME='seq-uptil-1-vote-per-doc-ActiveGpVariance-weighted_sampling-disregard_sequences'
+OUTPUT_NAME='seq-uptil-1-vote-per-doc-ActiveGpVariance-hard_cutoff-weighted_sampling-disregard_sequences'
 N_JOBS_PER_TOPIC=2
 
 # Every time you run stuff on Euler, there is gonna be a new file

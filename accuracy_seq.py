@@ -32,22 +32,13 @@ def weighted_choice(choices):
    upto = 0
    for i, (c, w) in enumerate(choices):
       if upto + w >= r:
-         return i
+         return c
       upto += w
    assert False, "Shouldn't get here"
-
-def weightedChoice(weights, objects):
-    """Return a random item from objects, with the weighting defined by weights 
-    (which must sum to 1)."""
-    cs = numpy.cumsum(weights) #An array of the weights, cumulatively summed.
-    idx = sum(cs < numpy.random.rand()) #Find the index of the first weight over a random value.
-    #print objects, idx
-    return objects[idx]
 
 def get_weighted_sample(elements, probs):
   sum_probs = sum(probs)
   probs  = map(lambda x: x/sum_probs, probs)
-  #return weightedChoice(probs, elements)
   return weighted_choice(zip(elements, probs))
 
 def sample_gp_variance_min_entropy(estimator_dict, n_votes_to_sample, texts,
@@ -90,12 +81,25 @@ def sample_gp_variance_min_entropy(estimator_dict, n_votes_to_sample, texts,
           # We ran out of votes for this document, disregard this sequence
           return None
         known_votes[curr_doc_selected].append(vote)
-        #print "Known votes ", known_votes 
+        print "Known votes ", known_votes 
       estimates = estimator(texts, known_votes, X, text_similarity, *args)
       #Just need to get the document index, which is element[0] for enumerate(estimates)
-      objects = list(enumerate(estimates))
+      
+      estimates = list(estimates)
+      #print len(estimates)
+      possibilities = filter(lambda x: len(known_votes[x[0]]) < 1 ,enumerate(estimates))
+      print possibilities, len(possibilities), list(enumerate(estimates))
+      #Just need to get the document index, which is element[0] for enumerate(estimates)
+      try:
+        curr_doc_selected = get_weighted_sample(possibilities,[x[1][1] for x in possibilities])[0]
+      except:
+        print "Excepted"
+        curr_doc_selected = get_weighted_sample(enumerate(estimates),[x[1] for x in estimates])[0]
+      print curr_doc_selected
+
+      #objects = list(enumerate(estimates))
       #print "estimates ", objects
-      curr_doc_selected = get_weighted_sample(objects,[x[1][1] for x in objects])
+      #curr_doc_selected = get_weighted_sample(objects,[x[1][1] for x in objects])
       #print curr_doc_selected
       # Calculate all the estimates
       estimates = estimator(texts, known_votes, X, text_similarity, *args)
