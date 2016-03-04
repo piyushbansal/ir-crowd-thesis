@@ -41,6 +41,11 @@ def get_weighted_sample(elements, probs):
   probs  = map(lambda x: x/sum_probs, probs)
   return weighted_choice(zip(elements, probs))
 
+def get_best_sample(elements, probs):
+  sorted_possibilities = sorted(elements, key=lambda x: x[1][1], reverse=True)
+  print sorted_possibilities
+  return sorted_possibilities[0]
+
 def sample_gp_variance_min_entropy(estimator_dict, n_votes_to_sample, texts,
   vote_lists, truths, X, text_similarity, idx=None, return_final=False, *args):
   """ Randomly sample votes and re-calculate estimates.
@@ -87,14 +92,18 @@ def sample_gp_variance_min_entropy(estimator_dict, n_votes_to_sample, texts,
       
       estimates = list(estimates)
       #print len(estimates)
-      possibilities = filter(lambda x: len(known_votes[x[0]]) < 1 ,enumerate(estimates))
+      num_votes_step = sum(map(lambda x: bool(x), known_votes))/ len(unknown_votes)
+      print num_votes_step
+      possibilities = filter(lambda x: len(known_votes[x[0]]) < 1 + num_votes_step ,enumerate(estimates))
       print possibilities, len(possibilities), list(enumerate(estimates))
       #Just need to get the document index, which is element[0] for enumerate(estimates)
       try:
-        curr_doc_selected = get_weighted_sample(possibilities,[x[1][1] for x in possibilities])[0]
+        curr_doc_selected = get_best_sample(possibilities,[x[1][1] for x in possibilities])[0]
+        #curr_doc_selected = get_weighted_sample(possibilities,[x[1][1] for x in possibilities])[0]
       except:
         print "Excepted"
-        curr_doc_selected = get_weighted_sample(enumerate(estimates),[x[1] for x in estimates])[0]
+        curr_doc_selected = get_best_sample(enumerate(estimates),[x[1] for x in estimates])[0]
+        #curr_doc_selected = get_weighted_sample(enumerate(estimates),[x[1] for x in estimates])[0]
       print curr_doc_selected
 
       #objects = list(enumerate(estimates))
@@ -217,9 +226,9 @@ if __name__ == "__main__":
        #'MVNN(0.5)' : (est_majority_vote_with_nn, [ 0.5 ]),
        #'ActiveMergeEnoughVotes(0.2)' : (est_active_merge_enough_votes, [0.2]),
        #'ActiveMergeEnoughVotes(0.1)' : (est_active_merge_enough_votes, [0.1]),
-  }, (0.01, 1.05), topic_id, N_SEQS_PER_EST)
+  }, (0.01, 2.05), topic_id, N_SEQS_PER_EST)
 
   print_accuracy_sequences_to_stderr({
-      'ActiveGPVariance' : (est_gp_min_variance, [None]),
-    }, (0.01, 1.05), topic_id, N_SEQS_PER_EST, sampler=sample_gp_variance_min_entropy)
+      #'ActiveGPVariance' : (est_gp_min_variance, [None]),
+    }, (0.01, 2.05), topic_id, N_SEQS_PER_EST, sampler=sample_gp_variance_min_entropy)
 

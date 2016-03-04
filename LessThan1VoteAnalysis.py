@@ -3,7 +3,7 @@ import matplotlib.pyplot as plt
 
 Y_axis = list(np.arange(0,1.1,0.05))
 
-data = open('means.csv').readlines()
+data = open('means_old.csv').readlines()
 cleaned = map(lambda x: eval(x.strip().split()[0]), data[1:])
 
 unique_methods = list(set([x[1] for x in cleaned]))

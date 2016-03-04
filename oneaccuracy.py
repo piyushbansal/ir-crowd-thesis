@@ -17,7 +17,7 @@ from numpy.random import rand
 get_mean_vote = lambda vote_list: numpy.mean(vote_list) if vote_list else None
 
 def weighted_choice(choices):
-   #print choices
+   print choices
    total = sum(w for c, w in choices)
    r = random.uniform(0, total)
    upto = 0
@@ -32,6 +32,11 @@ def get_weighted_sample(elements, probs):
   sum_probs = sum(probs)
   probs  = map(lambda x: x/sum_probs, probs)
   return weighted_choice(zip(elements, probs))
+
+def get_best_sample(elements, probs):
+  sorted_possibilities = sorted(elements, key=lambda x: x[1][1], reverse=True)
+  print sorted_possibilities
+  return sorted_possibilities[0]
 
 def get_system_entropy(vote_lists, base=2,method="SUM"):
   """Computes the entropy of the system base "base", using the method 
@@ -258,20 +263,26 @@ def sample_gp_variance_min_entropy(estimator, n_votes_to_sample, texts,
         # We ran out of votes for this document, disregard this.
         return None
       known_votes[curr_doc_selected].append(vote)
-      #print known_votes 
+      print known_votes 
     estimates = estimator(texts, known_votes, X, text_similarity, *args)
     #print estimates
     #sorted_estimates = sorted(enumerate(estimates), key=lambda x: x[1][1])
     estimates = list(estimates)
     #print len(estimates)
-    possibilities = filter(lambda x: len(known_votes[x[0]]) < 1 ,enumerate(estimates))
+    
+    num_votes_step = sum(map(lambda x: bool(x), known_votes))/ len(unknown_votes)
+    print num_votes_step
+    possibilities = filter(lambda x: len(known_votes[x[0]]) < num_votes_step + 1 ,enumerate(estimates))
     #print possibilities, len(possibilities), list(enumerate(estimates))
     #Just need to get the document index, which is element[0] for enumerate(estimates)
+    
     try:
-      curr_doc_selected = get_weighted_sample(possibilities,[x[1][1] for x in possibilities])[0]
+      curr_doc_selected = get_best_sample(possibilities,[x[1][1] for x in possibilities])[0]
+      #curr_doc_selected = get_weighted_sample(possibilities,[x[1][1] for x in possibilities])[0]
     except:
       print "Excepted"
-      curr_doc_selected = get_weighted_sample(enumerate(estimates),[x[1] for x in estimates])[0]
+      curr_doc_selected = get_best_sample(enumerate(estimates),[x[1] for x in estimates])[0]
+      #curr_doc_selected = get_weighted_sample(enumerate(estimates),[x[1] for x in estimates])[0]
     print curr_doc_selected
 
     #curr_doc_selected = random.choice([element[0] for element in sorted_estimates][:5])

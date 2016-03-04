@@ -8,7 +8,7 @@ topic_ids=(20932, 20488, 20910, 20958, 20714, 20636, 20956, 20424, 20916, 20542,
 
 topic_wise_data = {}
 
-with open('accuracy.csv', 'r') as f:
+with open('accuracy_old.csv', 'r') as f:
 	data = f.readlines()
 	cleaned = map(lambda x: eval(x.strip().split()[0]), filter(lambda x: "NA" not in x,data[1:]))
 
@@ -40,7 +40,6 @@ def get_data_for_one_topic(topic, cleaned):
 		i = 0
 		curr_sum = []
 		for items in all_rows[method]:
-			#print items, Y_axis[i], Y_axis[i+1]
 			if (items[1] >= Y_axis[i]) and (items[1] < Y_axis[i+1]):
 				curr_sum.append(items[0])
 				continue
@@ -51,10 +50,6 @@ def get_data_for_one_topic(topic, cleaned):
 				i += 1
 				
 
-	#radius = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0]
-	#area = [3.14159, 12.56636, 28.27431, 50.26544, 78.53975, 113.09724]
-	#square = [1.0, 4.0, 9.0, 16.0, 25.0, 36.0]
-
 	styles = ['r', 'b', 'g']
 	for i, method in enumerate(bucketed):
 		Y_axis = Y_axis[0:len(bucketed[method])]
@@ -63,7 +58,9 @@ def get_data_for_one_topic(topic, cleaned):
 	plt.ylabel('Accuracy')
 	plt.title('VotesPerDoc vs Accuracy for topic - %s.' %(topic))
 	plt.legend(loc='lower right' )
-	plt.show()
+	plt.savefig('vote_seq_per_topic/%s.pdf' %(topic))
+	plt.close()
+	#plt.show()
 
 	for method in bucketed:
 		print method
@@ -72,11 +69,8 @@ def get_data_for_one_topic(topic, cleaned):
 
 
 
-# print topic_wise_data
-# print unique_methods
 for topic in topic_wise_data:
 	print topic
-	#sorted_cleaned = sorted(topic_wise_data[topic], key = lambda x: x[0])
 	get_data_for_one_topic(topic, topic_wise_data[topic])
 
 
