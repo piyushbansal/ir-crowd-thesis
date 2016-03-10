@@ -467,7 +467,7 @@ def classify_kde_bayes(texts, vote_lists, X, text_similarity, sufficient_similar
         positive_examples.append(X[doc_index])
       if votes == False:
         negative_examples.append(X[doc_index])
-
+  
   kde_pos = KernelDensity(kernel='gaussian', bandwidth=0.2).fit(positive_examples)
   kde_neg = KernelDensity(kernel='gaussian', bandwidth=0.2).fit(negative_examples)
 
