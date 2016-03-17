@@ -13,7 +13,8 @@ import random
 import numpy
 from scipy import sparse 
 from scipy.stats import entropy
-
+from sklearn.neighbors import KernelDensity
+import copy
 
 get_mean_vote = lambda vote_list: numpy.mean(vote_list) if vote_list else None
 
@@ -49,6 +50,38 @@ def get_best_sample(elements, probs):
   sorted_possibilities = sorted(elements, key=lambda x: x[1][1], reverse=True)
   print sorted_possibilities
   return sorted_possibilities[0] 
+
+def get_density_based_best_sample(X, known_votes, possibilities):
+  total_votes = sum(map(lambda x: len(x), known_votes))
+  print total_votes
+  X = X.toarray()
+  current_vectors = numpy.copy(X)
+  #print 'X', X
+  #print 'known_votes ', known_votes
+  original_docs = len(X)
+  possibilities = set([x[0] for x in possibilities])
+  #print possibilities
+
+  for i, sample in enumerate(known_votes):
+    for k in range(len(sample)):
+      current_vectors = numpy.append(current_vectors, [X[i]], axis=0)
+  #print 'current_vectors ', current_vectors, len(current_vectors)
+  #assert current_vectors != X
+  model = KernelDensity(kernel='gaussian', bandwidth=0.2).fit(current_vectors)
+  scores = model.score_samples(X)
+  
+  if (total_votes % 3):
+    #Explore low density regions
+    sorted_scores = sorted(enumerate(scores), key = lambda x: x[1], reverse=True)
+  else:
+    #Exploit high density regions 1 times out of 3
+    sorted_scores = sorted(enumerate(scores), key = lambda x: x[1])
+  #print sorted_scores
+  for i in range(original_docs):
+    if sorted_scores[i][0] in possibilities:
+      #print sorted_scores[i][0]
+      return sorted_scores[i][0]
+  return None
 
 def get_min_entropy_sample(known_votes, possibilities):
   """In this case, we try to compute the document which minimises the entropy by most.
@@ -148,25 +181,25 @@ def sample_gp_variance_min_entropy(estimator_dict, n_votes_to_sample, texts,
           # We ran out of votes for this document, disregard this sequence
           return None
         known_votes[curr_doc_selected].append(vote)
-        print "Known votes ", known_votes 
+        #print "Known votes ", known_votes 
       estimates = estimator(texts, known_votes, X, text_similarity, *args)
       #Just need to get the document index, which is element[0] for enumerate(estimates)
       
       estimates = list(estimates)
       #print len(estimates)
-      num_votes_step = sum(map(lambda x: bool(x), known_votes))/ len(unknown_votes)
-      print num_votes_step
+      num_votes_step = sum(map(lambda x: len(x), known_votes))/ len(unknown_votes)
+      #print num_votes_step
       possibilities = filter(lambda x: len(known_votes[x[0]]) < 1 + num_votes_step ,enumerate(estimates))
-      print possibilities, len(possibilities), list(enumerate(estimates))
+      #print possibilities, len(possibilities), list(enumerate(estimates))
       #Just need to get the document index, which is element[0] for enumerate(estimates)
       try:
         curr_doc_selected = get_best_sample(possibilities,[x[1][1] for x in possibilities])[0]
         #curr_doc_selected = get_weighted_sample(possibilities,[x[1][1] for x in possibilities])[0]
       except:
-        print "Excepted"
+        #print "Excepted"
         curr_doc_selected = get_best_sample(enumerate(estimates),[x[1] for x in estimates])[0]
         #curr_doc_selected = get_weighted_sample(enumerate(estimates),[x[1] for x in estimates])[0]
-      print curr_doc_selected
+      #print curr_doc_selected
 
       #objects = list(enumerate(estimates))
       #print "estimates ", objects
@@ -202,13 +235,40 @@ def sample_min_entropy(estimator_dict, n_votes_to_sample, texts,
     estimates = [None for _ in vote_lists]
 
     curr_doc_selected = None
-    
-    # This is a crowdsourcing procedure
+
+    document_idx_vote_seq = []
+
+    document_vote_counts = [ 0 for _ in vote_lists ]
+
+    #Randomly sampling 30 votes first for avoiding bias etc.
+    for votes_required in range(30):
+      min_vote_doc_idxs = get_indexes_of_smallest_elements(document_vote_counts)
+      updated_doc_idx = random.choice(min_vote_doc_idxs)
+      document_vote_counts[updated_doc_idx] += 1
+
+      # Randomly pick a vote for this document
+      vote_idx = random.randrange(len(vote_lists[updated_doc_idx]))
+
+      vote = vote_lists[updated_doc_idx][vote_idx]
+      document_idx_vote_seq.append( (updated_doc_idx, vote ) )
+
+    for document_idx, vote in document_idx_vote_seq:
+      known_votes[document_idx].append(vote)
+      estimates = estimator(texts, known_votes, X, text_similarity, *args)
+      try:
+        accuracy = get_accuracy(estimates, truths)
+        accuracy_sequences[estimator_name].append(accuracy)
+      except Exception, e:
+        print "Pooped"
+        return None
+
+    # This is a crowdsourcing procedure, random sampling end
     for index in xrange(n_votes_to_sample):
       #print "Sampling vote number ", index
 
       # Draw one vote for a random document
       if curr_doc_selected is None:
+        #print "Sampling random vote yall"
         updated_doc_idx = random.randrange(len(vote_lists))
         if not unknown_votes[updated_doc_idx]:
           # We ran out of votes for this document, diregard this sequence
@@ -223,26 +283,33 @@ def sample_min_entropy(estimator_dict, n_votes_to_sample, texts,
           # We ran out of votes for this document, disregard this sequence
           return None
         known_votes[curr_doc_selected].append(vote)
-        #print "Known votes ", known_votes 
-      estimates = estimator(texts, known_votes, X, text_similarity, *args)
-      #Just need to get the document index, which is element[0] for enumerate(estimates)
+        #print "Known votes ", known_votes
+
+      if index %50:
+        # While doing density based sampling, we don't really need to do label aggregation at each point.
+        # Still doing it at every 50th vote, just to keep this code around for other 
+        # sampling methods like entropy based.
+        estimates = estimator(texts, known_votes, X, text_similarity, *args)
       
       estimates = list(estimates)
       #print len(estimates)
-      num_votes_step = sum(map(lambda x: bool(x), known_votes))/ len(unknown_votes)
-      #print num_votes_step
+      num_votes_step = sum(map(lambda x: len(x), known_votes))/ len(unknown_votes)
+      #print 'num_vote_step ', num_votes_step
       possibilities = filter(lambda x: len(known_votes[x[0]]) < 1 + num_votes_step ,enumerate(estimates))
       #print possibilities, len(possibilities), list(enumerate(estimates))
       #Just need to get the document index, which is element[0] for enumerate(estimates)
       try:
         #curr_doc_selected = get_best_sample(possibilities,[x[1][1] for x in possibilities])[0]
         #curr_doc_selected = get_weighted_sample(possibilities,[x[1][1] for x in possibilities])[0]
-        curr_doc_selected = get_min_entropy_sample(known_votes, possibilities)
+        #curr_doc_selected = get_min_entropy_sample(known_votes, possibilities)
+        curr_doc_selected = get_density_based_best_sample(X, known_votes, possibilities)
       except:
-        #print "Excepted"
+        print "Excepted"
         #curr_doc_selected = get_best_sample(enumerate(estimates),[x[1] for x in estimates])[0]
         #curr_doc_selected = get_weighted_sample(enumerate(estimates),[x[1] for x in estimates])[0]
-        curr_doc_selected = get_min_entropy_sample(known_votes, enumerate(estimates))
+        #curr_doc_selected = get_min_entropy_sample(known_votes, enumerate(estimates))
+        curr_doc_selected = get_density_based_best_sample(X, known_votes, enumerate(estimates))
+        
       #print "Curr_doc_selected ", curr_doc_selected
 
       #objects = list(enumerate(estimates))
@@ -256,7 +323,8 @@ def sample_min_entropy(estimator_dict, n_votes_to_sample, texts,
         accuracy = get_accuracy(estimates, truths)
         accuracy_sequences[estimator_name].append(accuracy)
       except Exception, e:
-        accuracy_sequences[estimator_name].append(None)
+        return None
+        #accuracy_sequences[estimator_name].append(None)
   
   return accuracy_sequences
 
@@ -325,7 +393,7 @@ def sample_min_entropy_kde(estimator_dict, start_idx, n_votes_to_sample, texts,
       
       estimates = list(estimates)
       #print len(estimates)
-      num_votes_step = sum(map(lambda x: bool(x), known_votes))/ len(unknown_votes)
+      num_votes_step = sum(map(lambda x: len(x), known_votes))/ len(unknown_votes)
       #print num_votes_step
       possibilities = filter(lambda x: len(known_votes[x[0]]) < 1 + num_votes_step ,enumerate(estimates))
       #print possibilities, len(possibilities), list(enumerate(estimates))
@@ -456,25 +524,25 @@ if __name__ == "__main__":
   except IndexError:
     raise Exception("Please supply the topic id")
 
-  N_SEQS_PER_EST = 25
+  N_SEQS_PER_EST = 30
 
   print_accuracy_sequences_to_stderr({
        #'GP' : (est_gp, []),
-       #'MV' : (est_majority_vote, []),
+       'MV' : (est_majority_vote, []),
        #'MEV(3)' : (est_merge_enough_votes, [ 3 ]),
-       #'MVNN(0.3)' : (est_majority_vote_with_nn, [ 0.3 ]),
+       #'MVNN(0.5)' : (est_majority_vote_with_nn, [ 0.5 ]),
        #'ActiveMergeEnoughVotes(0.2)' : (est_active_merge_enough_votes, [0.2]),
        #'ActiveMergeEnoughVotes(0.1)' : (est_active_merge_enough_votes, [0.1]),
   }, (0.01, 3.05), topic_id, N_SEQS_PER_EST)
 
   print_accuracy_sequences_to_stderr({
       #'ActiveGPVariance' : (est_gp_min_variance, [None]),
-    }, (0.01, 2.05), topic_id, N_SEQS_PER_EST, sampler=sample_gp_variance_min_entropy)
+    }, (0.01, 3.05), topic_id, N_SEQS_PER_EST, sampler=sample_gp_variance_min_entropy)
 
   print_accuracy_sequences_to_stderr({
       #'MV' : (est_majority_vote, []),
-      #'ActiveMEV(3)' : (est_merge_enough_votes, [ 3 ]),
-      #'ActiveMVNN(0.3)' : (est_majority_vote_with_nn, [ 0.3 ]),
+      'ActiveMEV(3)' : (est_merge_enough_votes, [ 3 ]),
+      'ActiveMVNN(0.5)' : (est_majority_vote_with_nn, [ 0.5 ]),
       #'KDE': (classify_kde_bayes, [None]),
     }, (0.01, 3.05), topic_id, N_SEQS_PER_EST, sampler=sample_min_entropy)
 
@@ -482,8 +550,5 @@ if __name__ == "__main__":
       #'MV' : (est_majority_vote, []),
       #'ActiveMEV(3)' : (est_merge_enough_votes, [ 3 ]),
       #'ActiveMVNN(0.3)' : (est_majority_vote_with_nn, [ 0.3 ]),
-      'KDE': (classify_kde_bayes, [None]),
+      #'KDE': (classify_kde_bayes, [None]),
     }, (0.2, 3.05), topic_id, N_SEQS_PER_EST, sampler=sample_min_entropy_kde)
-
-
-

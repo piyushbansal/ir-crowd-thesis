@@ -39,7 +39,13 @@ with io.open(GROUND_TRUTH_FILE, 'r', encoding='utf-8') as f:
     doc_id = cols[2]
     truth = float(cols[3]) / 2
     if truth < 0:
-      truth = None
+      #Ground truth is unknown in this case, let's rely on consensus labels.
+      try:
+        truth = float(cols[6]) / 2
+        truth = bool(truth)
+      except:
+        print "Excepting on ground truth"
+        truth = None
     else:
       truth = bool(truth)
     truth_by_topic_id_and_doc_id[(topic_id, doc_id)] = truth
